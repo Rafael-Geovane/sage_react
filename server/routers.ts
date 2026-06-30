@@ -10,10 +10,17 @@ import {
   createTicket, createUsuario, deleteCuidador, deleteDispositivo,
   deleteTicket, deleteUsuario, getCuidadoresByUsuario, getDispositivos,
   getDispositivoBySerial, getEventosSaude, getPedidos, getTickets,
-  getUltimaLeituraByUsuario, getUltimasLeituras, getUsuarioByEmail,
+  getUltimaLeituraByUsuario, getUltimaLeituraByDispositivo,
+  getUltimasLeituras, getUsuarioByEmail,
   getUsuarioById, getUsuarios, ingestLeitura, updateCuidador,
   updateDispositivo, updatePedido, updateTicket, updateUsuario,
   getLeiturasHistorico, getLeiturasResumoDiario,
+  getLeiturasHistoricoByDispositivo, getLeiturasResumoDiarioByDispositivo,
+  getEventosByDispositivo,
+  getAlertasByUsuario, getAlertasNaoLidos, marcarAlertaComoLido,
+  marcarTodosAlertasComoLidos, verificarLimitesSaude,
+  getAlertasByDispositivo, getAlertasNaoLidosByDispositivo,
+  marcarTodosAlertasComoLidosByDispositivo,
 } from "./db";
 
 // Admin middleware
@@ -247,31 +254,6 @@ export const appRouter = router({
       .mutation(({ input }) => deleteTicket(input.id)),
   }),
 
-  // ─── EVENTOS_SAUDE ────────────────────────────────────────────────────────
-  eventosSaude: router({
-    list: protectedProcedure
-      .input(z.object({ idUsuario: z.number(), limit: z.number().optional() }))
-      .query(({ input }) => getEventosSaude(input.idUsuario, input.limit)),
-
-    create: protectedProcedure
-      .input(z.object({
-        frequenciaCardiaca: z.number().optional(),
-        oxigenacaoSpo2: z.number().optional(),
-        temperaturaCorporal: z.string().optional(),
-        quedasDetectadas: z.number().optional(),
-        localizacaoEndereco: z.string().optional(),
-        categoriaEvento: z.string().optional(),
-        descricaoEvento: z.string().optional(),
-        idUsuario: z.number(),
-        idDispositivo: z.number().optional(),
-        dataHoraRegistro: z.date().optional(),
-      }))
-      .mutation(({ input }) => createEventoSaude({
-        ...input,
-        dataHoraRegistro: input.dataHoraRegistro ?? new Date(),
-      })),
-  }),
-
   // ─── SENSORES (ingestão IoT) ──────────────────────────────────────────────
   sensores: router({
     // Formato antigo (flat) — mantido para retrocompatibilidade
@@ -303,7 +285,7 @@ export const appRouter = router({
           if (!disp) throw new TRPCError({ code: "NOT_FOUND", message: "Dispositivo não encontrado." });
           idDispositivo = disp.id;
           if (input.nivelBateria !== undefined) {
-            await updateDispositivo(idDispositivo, {
+            await updateDispositivo(idDispositivo!, {
               nivelBateria: input.nivelBateria,
               statusConexao: "Online",
               tempoUltimoSinal: "Agora",
@@ -311,7 +293,7 @@ export const appRouter = router({
           }
         }
         await ingestLeitura({
-          idDispositivo,
+          idDispositivo: idDispositivo!,
           idUsuario: input.idUsuario,
           frequenciaCardiaca: input.frequenciaCardiaca,
           oxigenacaoSpo2: input.oxigenacaoSpo2,
@@ -405,6 +387,17 @@ export const appRouter = router({
           });
         }
 
+        // Verificar limites de saúde e gerar alertas automáticos
+        await verificarLimitesSaude({
+          idUsuario: disp.idUsuario ?? undefined,
+          idDispositivo,
+          codigoSerial: input.codigo_serial,
+          frequenciaCardiaca: s.frequencia_cardiaca,
+          oxigenacaoSpo2: s.oxigenacao_spo2,
+          temperaturaCorporal: s.temperatura_corporal,
+          quedaDetectada: s.queda_detectada,
+        });
+
         return { success: true, idDispositivo, codigoSerial: input.codigo_serial };
       }),
 
@@ -416,15 +409,87 @@ export const appRouter = router({
       .input(z.object({ idUsuario: z.number() }))
       .query(({ input }) => getUltimaLeituraByUsuario(input.idUsuario)),
 
+    ultimaPorDispositivo: publicProcedure
+      .input(z.object({ idDispositivo: z.number() }))
+      .query(({ input }) => getUltimaLeituraByDispositivo(input.idDispositivo)),
+
     // Histórico bruto de leituras por período
     historico: publicProcedure
       .input(z.object({ idUsuario: z.number(), dias: z.number().min(1).max(90).default(20) }))
       .query(({ input }) => getLeiturasHistorico(input.idUsuario, input.dias)),
 
+    historicoByDispositivo: publicProcedure
+      .input(z.object({ idDispositivo: z.number(), dias: z.number().min(1).max(90).default(20) }))
+      .query(({ input }) => getLeiturasHistoricoByDispositivo(input.idDispositivo, input.dias)),
+
     // Resumo diário (médias por dia) — ideal para gráficos
     resumoDiario: publicProcedure
       .input(z.object({ idUsuario: z.number(), dias: z.number().min(1).max(90).default(20) }))
       .query(({ input }) => getLeiturasResumoDiario(input.idUsuario, input.dias)),
+
+    resumoDiarioByDispositivo: publicProcedure
+      .input(z.object({ idDispositivo: z.number(), dias: z.number().min(1).max(90).default(20) }))
+      .query(({ input }) => getLeiturasResumoDiarioByDispositivo(input.idDispositivo, input.dias)),
+  }),
+
+  // ─── EVENTOS POR DISPOSITIVO ───────────────────────────────────────────
+  eventosSaude: router({
+    list: protectedProcedure
+      .input(z.object({ idUsuario: z.number(), limit: z.number().optional() }))
+      .query(({ input }) => getEventosSaude(input.idUsuario, input.limit)),
+
+    byDispositivo: publicProcedure
+      .input(z.object({ idDispositivo: z.number(), limit: z.number().optional() }))
+      .query(({ input }) => getEventosByDispositivo(input.idDispositivo, input.limit)),
+
+    create: protectedProcedure
+      .input(z.object({
+        frequenciaCardiaca: z.number().optional(),
+        oxigenacaoSpo2: z.number().optional(),
+        temperaturaCorporal: z.string().optional(),
+        quedasDetectadas: z.number().optional(),
+        localizacaoEndereco: z.string().optional(),
+        categoriaEvento: z.string().optional(),
+        descricaoEvento: z.string().optional(),
+        idUsuario: z.number(),
+        idDispositivo: z.number().optional(),
+        dataHoraRegistro: z.date().optional(),
+      }))
+      .mutation(({ input }) => createEventoSaude({
+        ...input,
+        dataHoraRegistro: input.dataHoraRegistro ?? new Date(),
+      })),
+  }),
+
+  // ─── ALERTAS (notificações de saúde) ────────────────────────────────────
+  alertas: router({
+    list: protectedProcedure
+      .input(z.object({ idUsuario: z.number(), limit: z.number().optional() }))
+      .query(({ input }) => getAlertasByUsuario(input.idUsuario, input.limit)),
+
+    byDispositivo: publicProcedure
+      .input(z.object({ idDispositivo: z.number(), limit: z.number().optional() }))
+      .query(({ input }) => getAlertasByDispositivo(input.idDispositivo, input.limit)),
+
+    naoLidos: protectedProcedure
+      .input(z.object({ idUsuario: z.number() }))
+      .query(({ input }) => getAlertasNaoLidos(input.idUsuario)),
+
+    naoLidosByDispositivo: publicProcedure
+      .input(z.object({ idDispositivo: z.number() }))
+      .query(({ input }) => getAlertasNaoLidosByDispositivo(input.idDispositivo)),
+
+    marcarLido: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => marcarAlertaComoLido(input.id)),
+
+    marcarTodosLidos: protectedProcedure
+      .input(z.object({ idUsuario: z.number() }))
+      .mutation(({ input }) => marcarTodosAlertasComoLidos(input.idUsuario)),
+
+    marcarTodosLidosByDispositivo: publicProcedure
+      .input(z.object({ idDispositivo: z.number() }))
+      .mutation(({ input }) => marcarTodosAlertasComoLidosByDispositivo(input.idDispositivo)),
   }),
 
   // ─── ADMIN KPIs ───────────────────────────────────────────────────────────
@@ -501,6 +566,17 @@ export async function handleIotIngest(body: any) {
       dataHoraRegistro: body.timestamp ? new Date(body.timestamp) : new Date(),
     });
   }
+
+  // Verificar limites de saúde e gerar alertas automáticos
+  await verificarLimitesSaude({
+    idUsuario: disp.idUsuario ?? undefined,
+    idDispositivo,
+    codigoSerial: serial,
+    frequenciaCardiaca: s.frequencia_cardiaca,
+    oxigenacaoSpo2: s.oxigenacao_spo2,
+    temperaturaCorporal: s.temperatura_corporal,
+    quedaDetectada: s.queda_detectada,
+  });
 
   return { success: true, idDispositivo, codigoSerial: serial };
 }

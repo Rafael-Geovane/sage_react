@@ -190,7 +190,7 @@ export default function Auth() {
                         <label className="block text-xs text-slate-400 mb-1">E-mail *</label>
                         <input type="email" value={cadastro.email} onChange={set("email")} placeholder="joao@email.com" required className={inputCls} style={inputStyle} />
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs text-slate-400 mb-1">Senha *</label>
                           <input type="password" value={cadastro.senha} onChange={set("senha")} placeholder="••••••••" required minLength={6} className={inputCls} style={inputStyle} />
@@ -200,7 +200,7 @@ export default function Auth() {
                           <input type="password" value={cadastro.confirmarSenha} onChange={set("confirmarSenha")} placeholder="••••••••" required className={inputCls} style={inputStyle} />
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs text-slate-400 mb-1">CPF</label>
                           <input value={cadastro.cpf} onChange={set("cpf")} placeholder="000.000.000-00" className={inputCls} style={inputStyle} />
@@ -210,7 +210,7 @@ export default function Auth() {
                           <input value={cadastro.telefone} onChange={set("telefone")} placeholder="(11) 99999-9999" className={inputCls} style={inputStyle} />
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs text-slate-400 mb-1">Data de Nascimento</label>
                           <input type="date" value={cadastro.dataNascimento} onChange={set("dataNascimento")} className={inputCls} style={inputStyle} />

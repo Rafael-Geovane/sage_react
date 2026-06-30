@@ -165,6 +165,23 @@ CREATE TABLE IF NOT EXISTS leitura_sensores (
 );
 
 -- ============================================================
+-- 10. TABELA: alertas (notificações de saúde geradas pelo sistema)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS alertas (
+  id                    SERIAL PRIMARY KEY,
+  id_usuario            INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+  id_dispositivo        INTEGER REFERENCES dispositivos(id) ON DELETE SET NULL,
+  tipo                  VARCHAR(50) NOT NULL,        -- 'BPM_BAIXO', 'BPM_ALTO', 'SPO2_BAIXO', 'TEMP_ALTA', 'TEMP_BAIXA', 'QUEDA'
+  severidade            VARCHAR(20) NOT NULL DEFAULT 'alerta', -- 'alerta', 'critico'
+  titulo                VARCHAR(255) NOT NULL,
+  mensagem              TEXT,
+  valor_detectado       NUMERIC(8,2),
+  limite_referencia     NUMERIC(8,2),
+  lido                  BOOLEAN DEFAULT FALSE,
+  criado_em             TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
 -- ÍNDICES para performance
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_cuidadores_usuario     ON cuidadores(id_usuario);
@@ -176,6 +193,7 @@ CREATE INDEX IF NOT EXISTS idx_eventos_dispositivo     ON eventos_saude(id_dispo
 CREATE INDEX IF NOT EXISTS idx_disp_recebido           ON leitura_sensores(id_dispositivo, recebido_em DESC);
 CREATE INDEX IF NOT EXISTS idx_user_recebido           ON leitura_sensores(id_usuario, recebido_em DESC);
 CREATE INDEX IF NOT EXISTS idx_users_openid            ON users("openId");
+CREATE INDEX IF NOT EXISTS idx_alertas_usuario          ON alertas(id_usuario, criado_em DESC);
 
 -- ============================================================
 -- TRIGGER: atualizar atualizado_em automaticamente
@@ -227,6 +245,7 @@ ALTER TABLE pedidos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE eventos_saude ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leitura_sensores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alertas ENABLE ROW LEVEL SECURITY;
 
 -- Policies: permitir acesso total via service_role (backend)
 -- O backend usa a service_role key, então precisa de bypass completo
@@ -276,6 +295,62 @@ CREATE POLICY "Service role full access on leitura_sensores"
   USING (true)
   WITH CHECK (true);
 
+CREATE POLICY "Service role full access on alertas"
+  ON alertas FOR ALL
+  USING (true)
+  WITH CHECK (true);
+
+-- Permitir que o hardware (ESP) com a chave anônima (anon) faça apenas inserts
+CREATE POLICY "Permitir inserts anonimos de sensores" 
+  ON leitura_sensores FOR INSERT 
+  TO anon
+  WITH CHECK (true);
+
+-- ============================================================
+-- RPC: Inserir leitura via Código Serial (para o ESP32)
+-- ============================================================
+CREATE OR REPLACE FUNCTION inserir_leitura_via_serial(
+  p_codigo_serial VARCHAR,
+  p_frequencia_cardiaca INTEGER DEFAULT NULL,
+  p_temperatura NUMERIC DEFAULT NULL,
+  p_payload JSONB DEFAULT '{}'::jsonb
+) RETURNS json AS $$
+DECLARE
+  v_id_dispositivo INTEGER;
+  v_id_usuario INTEGER;
+BEGIN
+  -- 1. Busca o ID do dispositivo e a qual usuário ele pertence no momento
+  SELECT id, id_usuario INTO v_id_dispositivo, v_id_usuario
+  FROM dispositivos
+  WHERE codigo_serial = p_codigo_serial;
+
+  -- 2. Se o dispositivo não existir, retorna erro
+  IF v_id_dispositivo IS NULL THEN
+    RAISE EXCEPTION 'Dispositivo com serial % não encontrado.', p_codigo_serial;
+  END IF;
+
+  -- 3. Insere a leitura na tabela
+  INSERT INTO leitura_sensores (
+    id_dispositivo, 
+    id_usuario, 
+    frequencia_cardiaca, 
+    temperatura_corporal, 
+    payload
+  ) VALUES (
+    v_id_dispositivo, 
+    v_id_usuario, 
+    p_frequencia_cardiaca, 
+    p_temperatura, 
+    p_payload
+  );
+
+  RETURN json_build_object('sucesso', true, 'id_dispositivo', v_id_dispositivo);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Permite que a chave pública (anon) chame essa função
+GRANT EXECUTE ON FUNCTION inserir_leitura_via_serial TO anon;
+
 -- ============================================================
 -- SEED: Dados de demonstração
 -- ============================================================
@@ -303,14 +378,15 @@ VALUES
   (2, 'Luiz Costa',   '(11) 91234-0001', 'luiz@email.com',   'Cônjuge')
 ON CONFLICT DO NOTHING;
 
--- Dispositivos
+-- Dispositivos (3 cenários de demonstração)
+-- SGE-034 → João Silva  — Colete REAL (recebe dados do ESP32 de verdade)
+-- SGE-020 → Maria Costa — Dados SIMULADOS normais (tudo saudável)
+-- SGE-299 → Pedro Lima  — Dados SIMULADOS críticos (gera alertas)
 INSERT INTO dispositivos (id_usuario, codigo_serial, versao_firmware, tipo_conexao, nivel_bateria, status_conexao, tempo_ultimo_sinal, atualizado_em)
 VALUES
-  (1, 'SGW-001', 'v2.1.3', '4G',   78, 'Online',     'Há 2 min',  NOW() - INTERVAL '2 minutes'),
-  (2, 'SGW-002', 'v2.1.3', 'WiFi', 45, 'Online',     'Há 5 min',  NOW() - INTERVAL '5 minutes'),
-  (3, 'SGW-003', 'v2.0.1', '4G',   12, 'Offline',    'Há 3 horas', NOW() - INTERVAL '3 hours'),
-  (NULL, 'SGW-004', 'v2.1.3', '4G',100, 'Offline',    'Nunca',      NOW()),
-  (NULL, 'SGW-005', 'v2.1.3', 'WiFi',100,'Offline',   'Nunca',      NOW())
+  (1, 'SGE-034', 'v2.1.3', '4G',   85, 'Online',     'Agora',       NOW()),
+  (2, 'SGE-020', 'v2.1.3', 'WiFi', 92, 'Online',     'Há 1 min',   NOW() - INTERVAL '1 minute'),
+  (3, 'SGE-299', 'v2.0.1', '4G',   15, 'Online',     'Há 30 seg',  NOW() - INTERVAL '30 seconds')
 ON CONFLICT (codigo_serial) DO NOTHING;
 
 -- Pedidos
@@ -332,14 +408,22 @@ ON CONFLICT (numero_ticket) DO NOTHING;
 -- Eventos de saúde
 INSERT INTO eventos_saude (id_usuario, id_dispositivo, categoria_evento, descricao_evento, frequencia_cardiaca, oxigenacao_spo2, temperatura_corporal, quedas_detectadas, data_hora_registro)
 VALUES
-  (1, 1, 'Queda',       'Queda detectada no banheiro. Alerta enviado para cuidadores.',     NULL,  NULL, NULL,  1,    NOW() - INTERVAL '1 day 3 hours'),
-  (1, 1, 'SpO2 Baixo',  'Saturação caiu para 93%. Retornou ao normal em 2 minutos.',         72,    93,  36.5,  0,    NOW() - INTERVAL '2 days 1 hour'),
-  (1, 1, 'BPM Alto',    'Frequência cardíaca: 102 BPM por 5 minutos.',                       102,   97,  36.8,  0,    NOW() - INTERVAL '2 days 9 hours'),
-  (2, 2, 'Bateria',     'Nível de bateria: 15%. Conecte o carregador.',                       68,    98,  36.2,  0,    NOW() - INTERVAL '3 days'),
-  (1, 1, 'Conexão',     'Dispositivo SGW-001 reconectado à rede.',                            75,    98,  36.4,  0,    NOW() - INTERVAL '2 days 16 hours')
+  -- João (SGE-034) — eventos reais virão do ESP
+  (1, 1, 'Conexão',     'Dispositivo SGE-034 conectado à rede pela primeira vez.',              75,    98,  36.4,  0,    NOW() - INTERVAL '1 hour'),
+  -- Maria (SGE-020) — eventos normais simulados
+  (2, 2, 'Conexão',     'Dispositivo SGE-020 reconectado à rede.',                              72,    97,  36.6,  0,    NOW() - INTERVAL '2 hours'),
+  (2, 2, 'Bateria',     'Nível de bateria: 15%. Conecte o carregador.',                          68,    98,  36.2,  0,    NOW() - INTERVAL '3 days'),
+  -- Pedro (SGE-299) — eventos CRÍTICOS simulados para demonstrar alertas
+  (3, 3, 'BPM Baixo',   'Frequência cardíaca caiu para 42 BPM. Bradicardia detectada!',         42,    88,  34.5,  0,    NOW() - INTERVAL '10 minutes'),
+  (3, 3, 'SpO2 Baixo',  'Saturação caiu para 85%. Nível crítico de oxigenação!',                 45,    85,  34.8,  0,    NOW() - INTERVAL '8 minutes'),
+  (3, 3, 'Queda',        'Queda detectada! Alerta enviado para cuidadores.',                     38,    87,  34.2,  1,    NOW() - INTERVAL '5 minutes'),
+  (3, 3, 'Temp Baixa',   'Temperatura corporal caiu para 34.2°C. Risco de hipotermia!',         40,    86,  34.2,  0,    NOW() - INTERVAL '3 minutes')
 ON CONFLICT DO NOTHING;
 
--- Leituras de sensores (últimas 20 leituras do dispositivo 1 — usuário 1)
+-- ============================================================
+-- LEITURAS DE SENSORES — SGE-020 (Maria Costa · Dados NORMAIS)
+-- Simula 20 leituras saudáveis ao longo da última hora
+-- ============================================================
 INSERT INTO leitura_sensores (
   id_dispositivo, id_usuario, frequencia_cardiaca, oxigenacao_spo2, temperatura_corporal,
   acelerometro_x, acelerometro_y, acelerometro_z,
@@ -347,44 +431,87 @@ INSERT INTO leitura_sensores (
   latitude, longitude, nivel_bateria, queda_detectada, recebido_em
 )
 SELECT
-  1,                                                          -- id_dispositivo
-  1,                                                          -- id_usuario
-  (65 + random() * 20)::INTEGER,                              -- frequencia_cardiaca (65-85 BPM)
-  (95 + random() * 4)::INTEGER,                               -- oxigenacao_spo2 (95-99%)
-  (36.0 + random() * 1.5)::NUMERIC(4,1),                     -- temperatura_corporal
-  (random() * 2 - 1)::NUMERIC(8,3),                           -- acelerometro_x
-  (9.8 + random() * 0.2 - 0.1)::NUMERIC(8,3),                -- acelerometro_y (gravidade)
-  (random() * 2 - 1)::NUMERIC(8,3),                           -- acelerometro_z
-  (random() * 0.5 - 0.25)::NUMERIC(8,3),                      -- giroscopio_x
-  (random() * 0.5 - 0.25)::NUMERIC(8,3),                      -- giroscopio_y
-  (random() * 0.5 - 0.25)::NUMERIC(8,3),                      -- giroscopio_z
-  (-23.5505 + (random() - 0.5) * 0.01)::NUMERIC(10,7),       -- latitude (São Paulo)
-  (-46.6333 + (random() - 0.5) * 0.01)::NUMERIC(10,7),       -- longitude
-  (78 - gs)::INTEGER,                                          -- nivel_bateria (decresce)
-  FALSE,                                                       -- queda_detectada
-  NOW() - (gs * INTERVAL '3 seconds')                          -- recebido_em
+  2,                                                          -- id_dispositivo (SGE-020)
+  2,                                                          -- id_usuario (Maria)
+  (68 + random() * 12)::INTEGER,                              -- BPM normal: 68-80
+  (96 + random() * 3)::INTEGER,                               -- SpO2 normal: 96-99%
+  (36.2 + random() * 0.8)::NUMERIC(4,1),                     -- Temp normal: 36.2-37.0°C
+  (random() * 0.4 - 0.2)::NUMERIC(8,3),                       -- acelerometro_x (pouco movimento)
+  (9.8 + random() * 0.1 - 0.05)::NUMERIC(8,3),               -- acelerometro_y (gravidade)
+  (random() * 0.4 - 0.2)::NUMERIC(8,3),                       -- acelerometro_z
+  (random() * 0.1 - 0.05)::NUMERIC(8,3),                      -- giroscopio_x
+  (random() * 0.1 - 0.05)::NUMERIC(8,3),                      -- giroscopio_y
+  (random() * 0.1 - 0.05)::NUMERIC(8,3),                      -- giroscopio_z
+  (-23.5505 + (random() - 0.5) * 0.001)::NUMERIC(10,7),      -- latitude (São Paulo)
+  (-46.6333 + (random() - 0.5) * 0.001)::NUMERIC(10,7),      -- longitude
+  (92 - gs / 3)::INTEGER,                                      -- bateria: 92% descendo devagar
+  FALSE,                                                       -- sem quedas
+  NOW() - (gs * INTERVAL '3 minutes')                          -- a cada 3 minutos na última hora
 FROM generate_series(1, 20) AS gs;
 
--- Leituras de sensores — dispositivo 2 (usuário 2)
+-- ============================================================
+-- LEITURAS DE SENSORES — SGE-299 (Pedro Lima · Dados CRÍTICOS)
+-- Simula 20 leituras com valores PERIGOSOS para demonstrar alertas
+-- ============================================================
 INSERT INTO leitura_sensores (
   id_dispositivo, id_usuario, frequencia_cardiaca, oxigenacao_spo2, temperatura_corporal,
   acelerometro_x, acelerometro_y, acelerometro_z,
+  giroscopio_x, giroscopio_y, giroscopio_z,
   latitude, longitude, nivel_bateria, queda_detectada, recebido_em
 )
 SELECT
-  2, 2,
-  (60 + random() * 25)::INTEGER,
-  (94 + random() * 5)::INTEGER,
-  (35.8 + random() * 1.8)::NUMERIC(4,1),
-  (random() * 2 - 1)::NUMERIC(8,3),
-  (9.8 + random() * 0.2 - 0.1)::NUMERIC(8,3),
-  (random() * 2 - 1)::NUMERIC(8,3),
-  (-23.5610 + (random() - 0.5) * 0.01)::NUMERIC(10,7),
-  (-46.6550 + (random() - 0.5) * 0.01)::NUMERIC(10,7),
-  (45 - gs)::INTEGER,
-  FALSE,
-  NOW() - (gs * INTERVAL '5 seconds')
-FROM generate_series(1, 10) AS gs;
+  3,                                                          -- id_dispositivo (SGE-299)
+  3,                                                          -- id_usuario (Pedro)
+  (35 + random() * 15)::INTEGER,                              -- BPM BAIXO: 35-50 (bradicardia!)
+  (82 + random() * 10)::INTEGER,                              -- SpO2 BAIXO: 82-92% (hipóxia!)
+  (33.5 + random() * 1.5)::NUMERIC(4,1),                     -- Temp BAIXA: 33.5-35.0°C (hipotermia!)
+  (random() * 6 - 3)::NUMERIC(8,3),                           -- acelerometro_x (movimento intenso = queda)
+  (random() * 6 - 3)::NUMERIC(8,3),                           -- acelerometro_y (fora da gravidade)
+  (random() * 6 - 3)::NUMERIC(8,3),                           -- acelerometro_z
+  (random() * 3 - 1.5)::NUMERIC(8,3),                         -- giroscopio_x (muita rotação)
+  (random() * 3 - 1.5)::NUMERIC(8,3),                         -- giroscopio_y
+  (random() * 3 - 1.5)::NUMERIC(8,3),                         -- giroscopio_z
+  (-23.5610 + (random() - 0.5) * 0.005)::NUMERIC(10,7),      -- latitude
+  (-46.6550 + (random() - 0.5) * 0.005)::NUMERIC(10,7),      -- longitude
+  (15 - gs / 2)::INTEGER,                                      -- bateria BAIXA: 15% descendo rápido
+  CASE WHEN gs IN (3, 8, 15) THEN TRUE ELSE FALSE END,        -- 3 quedas detectadas nos registros 3, 8, 15
+  NOW() - (gs * INTERVAL '2 minutes')                          -- a cada 2 minutos nos últimos 40 minutos
+FROM generate_series(1, 20) AS gs;
+
+-- ============================================================
+-- ALERTAS SEED — SGE-299 (Pedro Lima · Alertas pré-gerados)
+-- Demonstra o painel de alertas com dados reais
+-- ============================================================
+INSERT INTO alertas (id_usuario, id_dispositivo, tipo, severidade, titulo, mensagem, valor_detectado, limite_referencia, lido, criado_em)
+VALUES
+  (3, 3, 'BPM_BAIXO',  'critico', '⚠️ Batimento cardíaco baixo: 38 BPM',
+   'O colete SGE-299 detectou frequência cardíaca de 38 BPM, abaixo do limite seguro de 50 BPM. Possível bradicardia.',
+   38, 50, FALSE, NOW() - INTERVAL '10 minutes'),
+
+  (3, 3, 'BPM_BAIXO',  'alerta',  '⚠️ Batimento cardíaco baixo: 45 BPM',
+   'O colete SGE-299 detectou frequência cardíaca de 45 BPM, abaixo do limite seguro de 50 BPM. Possível bradicardia.',
+   45, 50, FALSE, NOW() - INTERVAL '8 minutes'),
+
+  (3, 3, 'SPO2_BAIXO', 'critico', '🫁 Saturação de oxigênio baixa: 85%',
+   'O colete SGE-299 detectou SpO₂ de 85%, abaixo do limite seguro de 92%. Risco de hipóxia.',
+   85, 92, FALSE, NOW() - INTERVAL '7 minutes'),
+
+  (3, 3, 'SPO2_BAIXO', 'alerta',  '🫁 Saturação de oxigênio baixa: 89%',
+   'O colete SGE-299 detectou SpO₂ de 89%, abaixo do limite seguro de 92%. Risco de hipóxia.',
+   89, 92, FALSE, NOW() - INTERVAL '6 minutes'),
+
+  (3, 3, 'TEMP_BAIXA', 'critico', '🌡️ Temperatura baixa: 33.8°C',
+   'O colete SGE-299 detectou temperatura de 33.8°C, abaixo do limite de 35.0°C. Risco de hipotermia.',
+   33.8, 35.0, FALSE, NOW() - INTERVAL '5 minutes'),
+
+  (3, 3, 'QUEDA',      'critico', '🚨 Queda detectada!',
+   'O colete SGE-299 detectou uma queda. Verifique imediatamente o usuário.',
+   1, 0, FALSE, NOW() - INTERVAL '3 minutes'),
+
+  (3, 3, 'BPM_BAIXO',  'critico', '⚠️ Batimento cardíaco baixo: 36 BPM',
+   'O colete SGE-299 detectou frequência cardíaca de 36 BPM, abaixo do limite seguro de 50 BPM. Possível bradicardia.',
+   36, 50, FALSE, NOW() - INTERVAL '1 minute')
+ON CONFLICT DO NOTHING;
 
 -- ============================================================
 -- FUNÇÕES AUXILIARES (usadas pelo backend)

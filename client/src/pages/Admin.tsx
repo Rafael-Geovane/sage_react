@@ -206,7 +206,7 @@ export default function Admin() {
           {/* KPIs */}
           {activeTab === "kpis" && (
             <div className="space-y-6">
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 <KPICard icon={Users} label="Total de Usuários" value={kpis ? kpis.totalUsuarios.toString() : "—"} sub="+12% este mês" color="#0EA5E9" bg="rgba(14,165,233,0.08)" border="rgba(14,165,233,0.2)" />
                 <KPICard icon={Wifi} label="Coletes Online" value={kpis ? kpis.coletesOnline.toString() : "—"} sub="Agora mesmo" color="#10B981" bg="rgba(16,185,129,0.08)" border="rgba(16,185,129,0.2)" />
                 <KPICard icon={DollarSign} label="MRR" value={kpis ? `R$ ${kpis.mrr.toLocaleString("pt-BR")}` : "—"} sub="+8% vs. mês anterior" color="#F59E0B" bg="rgba(245,158,11,0.08)" border="rgba(245,158,11,0.2)" />
@@ -269,7 +269,8 @@ export default function Admin() {
               </div>
 
               <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.06)" }}>
-                <table className="w-full">
+                <div className="overflow-x-auto mobile-scroll-x">
+                <table className="w-full min-w-[600px]">
                   <thead>
                     <tr style={{ background: "rgba(14,20,30,0.9)" }}>
                       {["Nome","E-mail","Plano","Status","Ações"].map(h => (
@@ -307,6 +308,7 @@ export default function Admin() {
                       </>
                     ) : (
                       (usuariosQuery.data ?? []).map(u => {
+                        if (!u) return null;
                         const sc = statusColor("Ativo");
                         return (
                           <tr key={u.id} className="border-t hover:bg-white/2 transition-colors" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
@@ -331,6 +333,7 @@ export default function Admin() {
                     )}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           )}
@@ -347,7 +350,8 @@ export default function Admin() {
                 </button>
               </div>
               <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.06)" }}>
-                <table className="w-full">
+                <div className="overflow-x-auto mobile-scroll-x">
+                <table className="w-full min-w-[600px]">
                   <thead>
                     <tr style={{ background: "rgba(14,20,30,0.9)" }}>
                       {["Serial","Firmware","Bateria","Conexão","Status","Ações"].map(h => (
@@ -356,7 +360,7 @@ export default function Admin() {
                     </tr>
                   </thead>
                   <tbody>
-                    {[{s:"SGW-001",f:"v2.1.3",b:78,c:"4G",st:"Online"},{s:"SGW-002",f:"v2.1.3",b:45,c:"WiFi",st:"Online"},{s:"SGW-003",f:"v2.0.1",b:12,c:"4G",st:"Offline"},...(dispositivosQuery.data ?? []).map(d => ({s:d.codigoSerial,f:d.versaoFirmware??"v1.0",b:d.nivelBateria??0,c:d.tipoConexao??"4G",st:d.statusConexao??"Offline"}))].map((d,i) => {
+                    {[{s:"SGW-001",f:"v2.1.3",b:78,c:"4G",st:"Online"},{s:"SGW-002",f:"v2.1.3",b:45,c:"WiFi",st:"Online"},{s:"SGW-003",f:"v2.0.1",b:12,c:"4G",st:"Offline"},...(dispositivosQuery.data ?? []).map(d => ({s:d?.codigoSerial ?? "-",f:d?.versaoFirmware??"v1.0",b:d?.nivelBateria??0,c:d?.tipoConexao??"4G",st:d?.statusConexao??"Offline"}))].map((d,i) => {
                       const sc = statusColor(d.st);
                       return (
                         <tr key={i} className="border-t hover:bg-white/2 transition-colors" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
@@ -380,6 +384,7 @@ export default function Admin() {
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           )}
@@ -388,7 +393,8 @@ export default function Admin() {
           {activeTab === "pedidos" && (
             <div className="space-y-4">
               <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.06)" }}>
-                <table className="w-full">
+                <div className="overflow-x-auto mobile-scroll-x">
+                <table className="w-full min-w-[700px]">
                   <thead>
                     <tr style={{ background: "rgba(14,20,30,0.9)" }}>
                       {["Pedido","Plano","Cor/Tam","Pagamento","Valor","Status","Ações"].map(h => (
@@ -397,7 +403,7 @@ export default function Admin() {
                     </tr>
                   </thead>
                   <tbody>
-                    {[{n:"#SG-001",p:"Premium",ct:"Azul/M",pg:"Cartão",v:"R$ 249",s:"Enviado"},{n:"#SG-002",p:"HaaS",ct:"Preto/G",pg:"Pix",v:"R$ 349",s:"Pend. Pagamento"},{n:"#SG-003",p:"Básico",ct:"Cinza/P",pg:"Boleto",v:"R$ 149",s:"Entregue"},...(pedidosQuery.data ?? []).map(p => ({n:p.numeroPedido,p:p.nomePlano??"—",ct:`${p.corColete??"—"}/${p.tamanhoColete??"—"}`,pg:p.formaPagamento??"—",v:p.valor??"—",s:p.status??"—"}))].map((p,i) => {
+                    {[{n:"#SG-001",p:"Premium",ct:"Azul/M",pg:"Cartão",v:"R$ 249",s:"Enviado"},{n:"#SG-002",p:"HaaS",ct:"Preto/G",pg:"Pix",v:"R$ 349",s:"Pend. Pagamento"},{n:"#SG-003",p:"Básico",ct:"Cinza/P",pg:"Boleto",v:"R$ 149",s:"Entregue"},...(pedidosQuery.data ?? []).map(p => ({n:p?.numeroPedido ?? "-",p:p?.nomePlano??"—",ct:`${p?.corColete??"—"}/${p?.tamanhoColete??"—"}`,pg:p?.formaPagamento??"—",v:p?.valor??"—",s:p?.status??"—"}))].map((p,i) => {
                       const sc = statusColor(p.s);
                       return (
                         <tr key={i} className="border-t hover:bg-white/2 transition-colors" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
@@ -415,6 +421,7 @@ export default function Admin() {
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           )}
@@ -423,7 +430,8 @@ export default function Admin() {
           {activeTab === "tickets" && (
             <div className="space-y-4">
               <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.06)" }}>
-                <table className="w-full">
+                <div className="overflow-x-auto mobile-scroll-x">
+                <table className="w-full min-w-[550px]">
                   <thead>
                     <tr style={{ background: "rgba(14,20,30,0.9)" }}>
                       {["Ticket","Assunto","Prioridade","Status","Ações"].map(h => (
@@ -432,7 +440,7 @@ export default function Admin() {
                     </tr>
                   </thead>
                   <tbody>
-                    {[{n:"#T-001",a:"Colete não conecta ao app",pr:"Alta",s:"Aguardando"},{n:"#T-002",a:"Dúvida sobre plano HaaS",pr:"Baixa",s:"Respondido"},{n:"#T-003",a:"Alerta falso de queda",pr:"Média",s:"Em Análise"},...(ticketsQuery.data ?? []).map(t => ({n:t.numeroTicket,a:t.assunto,pr:t.prioridade??"Baixa",s:t.status??"Aguardando"}))].map((t,i) => {
+                    {[{n:"#T-001",a:"Colete não conecta ao app",pr:"Alta",s:"Aguardando"},{n:"#T-002",a:"Dúvida sobre plano HaaS",pr:"Baixa",s:"Respondido"},{n:"#T-003",a:"Alerta falso de queda",pr:"Média",s:"Em Análise"},...(ticketsQuery.data ?? []).map(t => ({n:t?.numeroTicket ?? "-",a:t?.assunto ?? "-",pr:t?.prioridade??"Baixa",s:t?.status??"Aguardando"}))].map((t,i) => {
                       const sc = statusColor(t.s);
                       const prColor = t.pr === "Alta" ? "#EF4444" : t.pr === "Média" ? "#F59E0B" : "#10B981";
                       return (
@@ -452,6 +460,7 @@ export default function Admin() {
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           )}

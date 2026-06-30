@@ -117,7 +117,7 @@ export default function Loja() {
   return (
     <div className="min-h-screen" style={{ background: "#0A0F16" }}>
       {/* Header */}
-      <header className="sticky top-0 z-50 px-6 py-4 flex items-center gap-4" style={{ background: "rgba(10,15,22,0.95)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+      <header className="sticky top-0 z-50 px-4 sm:px-6 py-3 sm:py-4 flex items-center gap-3 sm:gap-4" style={{ background: "rgba(10,15,22,0.95)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         <Link href="/" className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors">
           <ArrowLeft className="w-5 h-5" />
           <span className="text-sm">Voltar</span>
@@ -145,7 +145,7 @@ export default function Loja() {
         </div>
       </header>
 
-      <div className="container py-10">
+      <div className="container py-6 sm:py-10">
         {etapa === "configurar" ? (
           <div className="grid lg:grid-cols-3 gap-8">
             {/* Configurador */}
@@ -153,7 +153,7 @@ export default function Loja() {
               {/* Planos */}
               <div>
                 <h2 className="text-xl font-bold text-white mb-4">Escolha seu Plano</h2>
-                <div className="grid md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {PLANOS.map(p => (
                     <button key={p.id} onClick={() => setPlano(p)}
                       className="relative p-5 rounded-2xl text-left transition-all duration-200 hover:-translate-y-0.5"
@@ -259,7 +259,7 @@ export default function Loja() {
                 <h3 className="text-lg font-bold text-white mb-6">Resumo do Pedido</h3>
 
                 {/* Preview do produto */}
-                <div className="relative rounded-xl overflow-hidden mb-6 flex items-center justify-center h-64 bg-white/5"
+                <div className="relative rounded-xl overflow-hidden mb-6 flex items-center justify-center h-48 sm:h-64 bg-white/5"
                   style={{ border: `1px solid ${corSelecionada.hex}33` }}>
                   <img src={corSelecionada.img} alt={`Colete ${corSelecionada.label}`} className="absolute inset-0 w-full h-full object-contain p-2" />
                   <div className="absolute bottom-3 left-3 text-xs font-medium px-2 py-1 rounded-full text-white backdrop-blur-md" style={{ background: "rgba(0,0,0,0.5)" }}>
@@ -320,7 +320,7 @@ export default function Loja() {
               {/* Dados pessoais */}
               <div className="p-6 rounded-2xl mb-6" style={{ background: "rgba(14,20,30,0.8)", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <h3 className="text-white font-semibold mb-4">Dados Pessoais</h3>
-                <div className="grid md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {[{k:"nome",l:"Nome completo",p:"João Silva"},{k:"email",l:"E-mail",p:"joao@email.com"},{k:"cpf",l:"CPF",p:"000.000.000-00"},{k:"telefone",l:"Telefone",p:"(11) 99999-9999"}].map(f => (
                     <div key={f.k}>
                       <label className="block text-xs text-slate-400 mb-1">{f.l}</label>

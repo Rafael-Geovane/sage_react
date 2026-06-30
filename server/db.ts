@@ -511,6 +511,12 @@ export async function getUltimaLeituraByUsuario(idUsuario: number) {
   return rowToLeitura(data);
 }
 
+export async function getUltimaLeituraByDispositivo(idDispositivo: number) {
+  const { data } = await sb().from("leitura_sensores").select("*")
+    .eq("id_dispositivo", idDispositivo).order("recebido_em", { ascending: false }).limit(1).single();
+  return rowToLeitura(data);
+}
+
 // ─── LEITURAS HISTÓRICAS (para relatórios) ───────────────────────────────────
 
 export async function getLeiturasHistorico(idUsuario: number, diasAtras: number = 20) {
@@ -519,6 +525,18 @@ export async function getLeiturasHistorico(idUsuario: number, diasAtras: number 
 
   const { data } = await sb().from("leitura_sensores").select("*")
     .eq("id_usuario", idUsuario)
+    .gte("recebido_em", desde.toISOString())
+    .order("recebido_em", { ascending: true });
+
+  return (data ?? []).map(rowToLeitura);
+}
+
+export async function getLeiturasHistoricoByDispositivo(idDispositivo: number, diasAtras: number = 20) {
+  const desde = new Date();
+  desde.setDate(desde.getDate() - diasAtras);
+
+  const { data } = await sb().from("leitura_sensores").select("*")
+    .eq("id_dispositivo", idDispositivo)
     .gte("recebido_em", desde.toISOString())
     .order("recebido_em", { ascending: true });
 
@@ -562,6 +580,48 @@ export async function getLeiturasResumoDiario(idUsuario: number, diasAtras: numb
     }));
 }
 
+export async function getLeiturasResumoDiarioByDispositivo(idDispositivo: number, diasAtras: number = 20) {
+  const leituras = await getLeiturasHistoricoByDispositivo(idDispositivo, diasAtras);
+
+  const porDia: Record<string, { bpms: number[]; spo2s: number[]; temps: number[]; quedas: number; count: number }> = {};
+
+  for (const l of leituras) {
+    if (!l) continue;
+    const dia = (l.recebidoEm ?? l.timestampSensor ?? "").toString().slice(0, 10);
+    if (!dia) continue;
+    if (!porDia[dia]) porDia[dia] = { bpms: [], spo2s: [], temps: [], quedas: 0, count: 0 };
+    const d = porDia[dia];
+    if (l.frequenciaCardiaca) d.bpms.push(Number(l.frequenciaCardiaca));
+    if (l.oxigenacaoSpo2) d.spo2s.push(Number(l.oxigenacaoSpo2));
+    if (l.temperaturaCorporal) d.temps.push(Number(l.temperaturaCorporal));
+    if (l.quedaDetectada) d.quedas++;
+    d.count++;
+  }
+
+  const avg = (arr: number[]) => arr.length > 0 ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null;
+
+  return Object.entries(porDia)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([dia, d]) => ({
+      dia,
+      bpmMedio: avg(d.bpms),
+      bpmMin: d.bpms.length > 0 ? Math.min(...d.bpms) : null,
+      bpmMax: d.bpms.length > 0 ? Math.max(...d.bpms) : null,
+      spo2Medio: avg(d.spo2s),
+      spo2Min: d.spo2s.length > 0 ? Math.min(...d.spo2s) : null,
+      spo2Max: d.spo2s.length > 0 ? Math.max(...d.spo2s) : null,
+      tempMedia: avg(d.temps),
+      quedas: d.quedas,
+      totalLeituras: d.count,
+    }));
+}
+
+export async function getEventosByDispositivo(idDispositivo: number, limit = 50) {
+  const { data } = await sb().from("eventos_saude").select("*")
+    .eq("id_dispositivo", idDispositivo).order("data_hora_registro", { ascending: false }).limit(limit);
+  return (data ?? []).map(rowToEvento);
+}
+
 // ─── ADMINS ──────────────────────────────────────────────────────────────────
 
 export interface InsertAdmin {
@@ -583,4 +643,216 @@ export async function createAdmin(input: InsertAdmin) {
   }).select().single();
   if (error) throw error;
   return data;
+}
+
+// ─── ALERTAS (notificações de saúde) ──────────────────────────────────────────
+
+export interface InsertAlerta {
+  idUsuario?: number | null;
+  idDispositivo?: number | null;
+  tipo: string;
+  severidade: "alerta" | "critico";
+  titulo: string;
+  mensagem?: string | null;
+  valorDetectado?: number | null;
+  limiteReferencia?: number | null;
+}
+
+function alertaToRow(d: InsertAlerta) {
+  return {
+    id_usuario: d.idUsuario ?? null,
+    id_dispositivo: d.idDispositivo ?? null,
+    tipo: d.tipo,
+    severidade: d.severidade,
+    titulo: d.titulo,
+    mensagem: d.mensagem ?? null,
+    valor_detectado: d.valorDetectado ?? null,
+    limite_referencia: d.limiteReferencia ?? null,
+  };
+}
+
+function rowToAlerta(row: any) {
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    idUsuario: row.id_usuario,
+    idDispositivo: row.id_dispositivo,
+    tipo: row.tipo,
+    severidade: row.severidade,
+    titulo: row.titulo,
+    mensagem: row.mensagem,
+    valorDetectado: row.valor_detectado,
+    limiteReferencia: row.limite_referencia,
+    lido: row.lido,
+    criadoEm: row.criado_em,
+  };
+}
+
+export async function createAlerta(input: InsertAlerta) {
+  const { data, error } = await sb().from("alertas").insert(alertaToRow(input)).select().single();
+  if (error) { console.error("[DB] createAlerta:", error); throw error; }
+  return data;
+}
+
+export async function getAlertasByUsuario(idUsuario: number, limit = 50) {
+  const { data } = await sb().from("alertas").select("*")
+    .eq("id_usuario", idUsuario).order("criado_em", { ascending: false }).limit(limit);
+  return (data ?? []).map(rowToAlerta);
+}
+
+export async function getAlertasNaoLidos(idUsuario: number) {
+  const { count } = await sb().from("alertas").select("*", { count: "exact", head: true })
+    .eq("id_usuario", idUsuario).eq("lido", false);
+  return count ?? 0;
+}
+
+export async function marcarAlertaComoLido(id: number) {
+  const { error } = await sb().from("alertas").update({ lido: true }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function marcarTodosAlertasComoLidos(idUsuario: number) {
+  const { error } = await sb().from("alertas").update({ lido: true }).eq("id_usuario", idUsuario).eq("lido", false);
+  if (error) throw error;
+}
+
+// ─── ALERTAS POR DISPOSITIVO ──────────────────────────────────────────────────
+
+export async function getAlertasByDispositivo(idDispositivo: number, limit = 50) {
+  const { data } = await sb().from("alertas").select("*")
+    .eq("id_dispositivo", idDispositivo).order("criado_em", { ascending: false }).limit(limit);
+  return (data ?? []).map(rowToAlerta);
+}
+
+export async function getAlertasNaoLidosByDispositivo(idDispositivo: number) {
+  const { count } = await sb().from("alertas").select("*", { count: "exact", head: true })
+    .eq("id_dispositivo", idDispositivo).eq("lido", false);
+  return count ?? 0;
+}
+
+export async function marcarTodosAlertasComoLidosByDispositivo(idDispositivo: number) {
+  const { error } = await sb().from("alertas").update({ lido: true }).eq("id_dispositivo", idDispositivo).eq("lido", false);
+  if (error) throw error;
+}
+
+// ─── LIMITES DE SAÚDE (constantes de referência) ──────────────────────────────
+
+export const LIMITES_SAUDE = {
+  BPM_MIN: 50,       // Bradicardia
+  BPM_MAX: 120,      // Taquicardia
+  SPO2_MIN: 92,      // Hipóxia
+  TEMP_MIN: 35.0,    // Hipotermia
+  TEMP_MAX: 38.5,    // Febre
+};
+
+/**
+ * Verifica os valores recebidos de uma leitura de sensor e cria alertas automaticamente
+ * quando os valores ultrapassam os limites de segurança.
+ */
+export async function verificarLimitesSaude(params: {
+  idUsuario?: number | null;
+  idDispositivo: number;
+  codigoSerial: string;
+  frequenciaCardiaca?: number | null;
+  oxigenacaoSpo2?: number | null;
+  temperaturaCorporal?: number | null;
+  quedaDetectada?: boolean;
+}) {
+  const alertas: InsertAlerta[] = [];
+
+  // BPM Baixo (Bradicardia)
+  if (params.frequenciaCardiaca != null && params.frequenciaCardiaca < LIMITES_SAUDE.BPM_MIN) {
+    alertas.push({
+      idUsuario: params.idUsuario,
+      idDispositivo: params.idDispositivo,
+      tipo: "BPM_BAIXO",
+      severidade: params.frequenciaCardiaca < 40 ? "critico" : "alerta",
+      titulo: `⚠️ Batimento cardíaco baixo: ${params.frequenciaCardiaca} BPM`,
+      mensagem: `O colete ${params.codigoSerial} detectou frequência cardíaca de ${params.frequenciaCardiaca} BPM, abaixo do limite seguro de ${LIMITES_SAUDE.BPM_MIN} BPM. Possível bradicardia.`,
+      valorDetectado: params.frequenciaCardiaca,
+      limiteReferencia: LIMITES_SAUDE.BPM_MIN,
+    });
+  }
+
+  // BPM Alto (Taquicardia)
+  if (params.frequenciaCardiaca != null && params.frequenciaCardiaca > LIMITES_SAUDE.BPM_MAX) {
+    alertas.push({
+      idUsuario: params.idUsuario,
+      idDispositivo: params.idDispositivo,
+      tipo: "BPM_ALTO",
+      severidade: params.frequenciaCardiaca > 150 ? "critico" : "alerta",
+      titulo: `⚠️ Batimento cardíaco alto: ${params.frequenciaCardiaca} BPM`,
+      mensagem: `O colete ${params.codigoSerial} detectou frequência cardíaca de ${params.frequenciaCardiaca} BPM, acima do limite seguro de ${LIMITES_SAUDE.BPM_MAX} BPM. Possível taquicardia.`,
+      valorDetectado: params.frequenciaCardiaca,
+      limiteReferencia: LIMITES_SAUDE.BPM_MAX,
+    });
+  }
+
+  // SpO2 Baixo (Hipóxia)
+  if (params.oxigenacaoSpo2 != null && params.oxigenacaoSpo2 < LIMITES_SAUDE.SPO2_MIN) {
+    alertas.push({
+      idUsuario: params.idUsuario,
+      idDispositivo: params.idDispositivo,
+      tipo: "SPO2_BAIXO",
+      severidade: params.oxigenacaoSpo2 < 88 ? "critico" : "alerta",
+      titulo: `🫁 Saturação de oxigênio baixa: ${params.oxigenacaoSpo2}%`,
+      mensagem: `O colete ${params.codigoSerial} detectou SpO₂ de ${params.oxigenacaoSpo2}%, abaixo do limite seguro de ${LIMITES_SAUDE.SPO2_MIN}%. Risco de hipóxia.`,
+      valorDetectado: params.oxigenacaoSpo2,
+      limiteReferencia: LIMITES_SAUDE.SPO2_MIN,
+    });
+  }
+
+  // Temperatura Alta (Febre)
+  if (params.temperaturaCorporal != null && params.temperaturaCorporal > LIMITES_SAUDE.TEMP_MAX) {
+    alertas.push({
+      idUsuario: params.idUsuario,
+      idDispositivo: params.idDispositivo,
+      tipo: "TEMP_ALTA",
+      severidade: params.temperaturaCorporal > 39.5 ? "critico" : "alerta",
+      titulo: `🌡️ Temperatura alta: ${params.temperaturaCorporal}°C`,
+      mensagem: `O colete ${params.codigoSerial} detectou temperatura de ${params.temperaturaCorporal}°C, acima do limite de ${LIMITES_SAUDE.TEMP_MAX}°C. Possível febre.`,
+      valorDetectado: params.temperaturaCorporal,
+      limiteReferencia: LIMITES_SAUDE.TEMP_MAX,
+    });
+  }
+
+  // Temperatura Baixa (Hipotermia)
+  if (params.temperaturaCorporal != null && params.temperaturaCorporal < LIMITES_SAUDE.TEMP_MIN) {
+    alertas.push({
+      idUsuario: params.idUsuario,
+      idDispositivo: params.idDispositivo,
+      tipo: "TEMP_BAIXA",
+      severidade: params.temperaturaCorporal < 34.0 ? "critico" : "alerta",
+      titulo: `🌡️ Temperatura baixa: ${params.temperaturaCorporal}°C`,
+      mensagem: `O colete ${params.codigoSerial} detectou temperatura de ${params.temperaturaCorporal}°C, abaixo do limite de ${LIMITES_SAUDE.TEMP_MIN}°C. Risco de hipotermia.`,
+      valorDetectado: params.temperaturaCorporal,
+      limiteReferencia: LIMITES_SAUDE.TEMP_MIN,
+    });
+  }
+
+  // Queda detectada
+  if (params.quedaDetectada) {
+    alertas.push({
+      idUsuario: params.idUsuario,
+      idDispositivo: params.idDispositivo,
+      tipo: "QUEDA",
+      severidade: "critico",
+      titulo: `🚨 Queda detectada!`,
+      mensagem: `O colete ${params.codigoSerial} detectou uma queda. Verifique imediatamente o usuário.`,
+      valorDetectado: 1,
+      limiteReferencia: 0,
+    });
+  }
+
+  // Salvar todos os alertas gerados
+  for (const alerta of alertas) {
+    try {
+      await createAlerta(alerta);
+      console.log(`[ALERTA] ${alerta.tipo}: ${alerta.titulo}`);
+    } catch (err) {
+      console.error("[ALERTA] Erro ao criar alerta:", err);
+    }
+  }
+
+  return alertas;
 }
